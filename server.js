@@ -1,15 +1,15 @@
 // ============================================================
-//  Inner Light – Gemini API Proxy Server
+//  Inner Light – Groq API Proxy Server
 //  Run with:  node server.js
 //  Or:        npm start
 // ============================================================
 
 require('dotenv').config();
 const express = require('express');
-const cors    = require('cors');
-const path    = require('path');
+const cors = require('cors');
+const path = require('path');
 
-const app  = express();
+const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ── Middleware ───────────────────────────────────────────────
@@ -24,14 +24,14 @@ app.use(express.static(path.join(__dirname)));
 // ============================================================
 //  🔑  API KEY  –  stored safely in .env, never sent to browser
 // ============================================================
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-if (!GEMINI_API_KEY) {
-  console.error('❌  GEMINI_API_KEY is not set. Add it to your .env file.');
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+if (!GROQ_API_KEY) {
+  console.error('❌  GROQ_API_KEY is not set. Add it to your .env file.');
   process.exit(1);
 }
 
-const GEMINI_URL =
-  `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
 // ============================================================
 //  📝  SYSTEM PROMPT  –  Edit this freely.
@@ -43,7 +43,7 @@ const SYSTEM_PROMPT = `You are an AI assistant called "Lumina" for "Inner Light"
 
 YOUR PERSONALITY:
 - Warm, empathetic, calm, and encouraging — mirror the positive brand tone of the website.
-- Concise (aim for ≤ 120 words per reply unless more depth is truly needed).
+- Concise (aim for ≤ 60 words per reply unless more depth is truly needed).
 - Never reveal that you are built on Gemini or any third-party AI model.
 
 YOUR KNOWLEDGE (key website facts):
@@ -78,36 +78,40 @@ app.post('/api/chat', async (req, res) => {
       return res.status(400).json({ error: 'message is required' });
     }
 
-    // Build full conversation: existing history + new user turn
-    const contents = [
-      ...history,
-      { role: 'user', parts: [{ text: message }] }
+    // Build messages in OpenAI format: system prompt + history + new user turn
+    // Note: Gemini uses role "model"; OpenAI/Groq uses "assistant"
+    const messages = [
+      { role: 'system', content: SYSTEM_PROMPT },
+      ...history.map(h => ({
+        role: h.role === 'model' ? 'assistant' : h.role,
+        content: h.parts[0].text
+      })),
+      { role: 'user', content: message }
     ];
 
-    const geminiBody = {
-      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-      contents,
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 512,
-      }
-    };
-
-    // Forward to Gemini
-    const upstream = await fetch(GEMINI_URL, {
+    // Forward to Groq
+    const upstream = await fetch(GROQ_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(geminiBody),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        messages,
+        max_tokens: 512,
+        temperature: 0.7,
+      }),
     });
 
     if (!upstream.ok) {
       const err = await upstream.json().catch(() => ({}));
-      throw new Error(err?.error?.message || `Gemini returned ${upstream.status}`);
+      throw new Error(err?.error?.message || `Groq returned ${upstream.status}`);
     }
 
     const data = await upstream.json();
     const reply =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      data?.choices?.[0]?.message?.content ||
       "I'm sorry, I couldn't generate a response right now. Please try again.";
 
     return res.json({ reply });
